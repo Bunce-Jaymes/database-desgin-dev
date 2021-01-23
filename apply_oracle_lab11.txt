@@ -1,0 +1,601 @@
+SQL> 
+SQL> -- --------------------------------------------------------
+SQL> --  Step #1 : Merge statement to the rental table.
+SQL> -- --------------------------------------------------------
+SQL> 
+SQL> -- Count rentals before insert.
+SQL> SELECT   COUNT(*) AS "Rental before count"
+  2  FROM     rental;
+
+Rental before count                                                                                
+-------------------                                                                                
+                  8                                                                                
+
+1 row selected.
+
+SQL> 
+SQL> -- Merge transaction data into rental table.
+SQL> MERGE INTO rental target
+  2  USING (
+  3  SELECT   DISTINCT
+  4  	      r.rental_id
+  5  ,	      c.contact_id
+  6  ,	      tu.check_out_date AS check_out_date
+  7  ,	      tu.return_date AS return_date
+  8  ,	      1 AS created_by
+  9  ,	      TRUNC(SYSDATE) AS creation_date
+ 10  ,	      1 AS last_updated_by
+ 11  ,	      TRUNC(SYSDATE) AS last_update_date
+ 12  FROM     member m INNER JOIN transaction_upload tu
+ 13  ON       m.account_number = tu.account_number INNER JOIN contact c
+ 14  ON       m.member_id = c.member_id
+ 15  LEFT JOIN rental r
+ 16  ON       c.contact_id = r.customer_id
+ 17  AND      TRUNC(tu.check_out_date) = TRUNC(r.check_out_date)
+ 18  AND      TRUNC(tu.return_date) = TRUNC(r.return_date)
+ 19  WHERE    c.first_name = tu.first_name
+ 20  AND      NVL(c.middle_name,'x') = NVL(tu.middle_name,'x')
+ 21  AND      c.last_name = tu.last_name) source
+ 22  ON (target.rental_id = source.rental_id)
+ 23  WHEN MATCHED THEN
+ 24  UPDATE SET last_updated_by = source.last_updated_by
+ 25  ,		last_update_date = source.last_update_date
+ 26  WHEN NOT MATCHED THEN
+ 27  INSERT VALUES
+ 28  ( rental_s1.NEXTVAL
+ 29  , source.contact_id
+ 30  , source.check_out_date
+ 31  , source.return_date
+ 32  , source.created_by
+ 33  , source.creation_date
+ 34  , source.last_updated_by
+ 35  , source.last_update_date);
+
+4681 rows merged.
+
+SQL> 
+SQL> 
+SQL> -- Count rentals after insert.
+SQL> SELECT   COUNT(*) AS "Rental after count"
+  2  FROM     rental;
+
+Rental after count                                                                                 
+------------------                                                                                 
+              4689                                                                                 
+
+1 row selected.
+
+SQL> 
+SQL> -- --------------------------------------------------------
+SQL> --  Step #2 : Merge statement to the rental_item table.
+SQL> -- --------------------------------------------------------
+SQL> 
+SQL> -- Count rental items before insert.
+SQL> SELECT   COUNT(*)
+  2  FROM     rental_item;
+
+  COUNT(*)                                                                                         
+----------                                                                                         
+        13                                                                                         
+
+1 row selected.
+
+SQL> 
+SQL> -- Merge transaction data into rental_item table.
+SQL> MERGE INTO rental_item target
+  2  USING (
+  3  SELECT   ri.rental_item_id
+  4  ,	      r.rental_id
+  5  ,	      tu.item_id
+  6  ,	      TRUNC(r.return_date) - TRUNC(r.check_out_date) AS rental_item_price
+  7  ,	      cl1.common_lookup_id AS rental_item_type
+  8  ,	      1001 AS created_by
+  9  ,	      TRUNC(SYSDATE) AS creation_date
+ 10  ,	      1001 AS last_updated_by
+ 11  ,	      TRUNC(SYSDATE) AS last_update_date
+ 12  FROM     member m INNER JOIN transaction_upload tu
+ 13  ON       m.account_number = tu.account_number INNER JOIN contact c
+ 14  ON       m.member_id = c.member_id
+ 15  LEFT JOIN rental r
+ 16  ON       c.contact_id = r.customer_id
+ 17  AND      TRUNC(tu.check_out_date) = TRUNC(r.check_out_date)
+ 18  AND      TRUNC(tu.return_date) = TRUNC(r.return_date)
+ 19  INNER JOIN common_lookup cl1
+ 20  ON       cl1.common_lookup_table = 'RENTAL_ITEM'
+ 21  AND      cl1.common_lookup_column = 'RENTAL_ITEM_TYPE'
+ 22  AND      cl1.common_lookup_type = tu.rental_item_type
+ 23  LEFT JOIN rental_item ri
+ 24  ON       r.rental_id = ri.rental_id
+ 25  WHERE    c.first_name = tu.first_name
+ 26  AND      NVL(c.middle_name,'x') = NVL(tu.middle_name,'x')
+ 27  AND      c.last_name = tu.last_name) source
+ 28  ON (target.rental_item_id = source.rental_item_id)
+ 29  WHEN MATCHED THEN
+ 30  UPDATE SET last_updated_by = source.last_updated_by
+ 31  ,		last_update_date = source.last_update_date
+ 32  WHEN NOT MATCHED THEN
+ 33  INSERT VALUES
+ 34  ( rental_item_s1.nextval
+ 35  , source.rental_id
+ 36  , source.item_id
+ 37  , source.created_by
+ 38  , source.creation_date
+ 39  , source.last_updated_by
+ 40  , source.last_update_date
+ 41  , source.rental_item_type
+ 42  , source.rental_item_price);
+
+11520 rows merged.
+
+SQL> 
+SQL> -- Count rental items after insert.
+SQL> SELECT   COUNT(*) AS "After Insert"
+  2  FROM     rental_item;
+
+After Insert                                                                                       
+------------                                                                                       
+       11533                                                                                       
+
+1 row selected.
+
+SQL> 
+SQL> -- --------------------------------------------------------
+SQL> --  Step #3 : Merge statement to the transaction table.
+SQL> -- --------------------------------------------------------
+SQL> 
+SQL> -- Count transactions before insert
+SQL> SELECT   COUNT(*) AS "Before Insert"
+  2  FROM     transaction;
+
+Before Insert                                                                                      
+-------------                                                                                      
+            0                                                                                      
+
+1 row selected.
+
+SQL> 
+SQL> -- Merge transaction data into transaction table.
+SQL> MERGE INTO transaction target
+  2  USING (
+  3  SELECT   t.transaction_id
+  4  ,	      tu.payment_account_number AS transaction_account
+  5  ,	      cl1.common_lookup_id AS transaction_type
+  6  ,	      TRUNC(tu.transaction_date) AS transaction_date
+  7  ,	     (SUM(tu.transaction_amount) / 1.06) AS transaction_amount
+  8  ,	      r.rental_id
+  9  ,	      cl2.common_lookup_id AS payment_method_type
+ 10  ,	      m.credit_card_number AS payment_account_number
+ 11  ,	      1001 AS created_by
+ 12  ,	      TRUNC(SYSDATE) AS creation_date
+ 13  ,	      1001 AS last_updated_by
+ 14  ,	      TRUNC(SYSDATE) AS last_update_date
+ 15  FROM     member m INNER JOIN contact c
+ 16  ON       m.member_id = c.member_id INNER JOIN transaction_upload tu
+ 17  ON       c.first_name = tu.first_name
+ 18  AND      NVL(c.middle_name,'x') = NVL(tu.middle_name,'x')
+ 19  AND      c.last_name = tu.last_name
+ 20  LEFT JOIN rental r
+ 21  ON       c.contact_id = r.customer_id
+ 22  AND      TRUNC(r.check_out_date) = TRUNC(tu.check_out_date)
+ 23  AND      TRUNC(r.return_date) = TRUNC(tu.return_date)
+ 24  INNER JOIN common_lookup cl1
+ 25  ON      cl1.common_lookup_table = 'TRANSACTION'
+ 26  AND     cl1.common_lookup_column = 'TRANSACTION_TYPE'
+ 27  AND     cl1.common_lookup_type = tu.transaction_type
+ 28  INNER JOIN common_lookup cl2
+ 29  ON      cl2.common_lookup_table = 'TRANSACTION'
+ 30  AND     cl2.common_lookup_column = 'PAYMENT_METHOD_TYPE'
+ 31  AND     cl2.common_lookup_type = tu.payment_method_type
+ 32  LEFT JOIN transaction t
+ 33  ON  t.TRANSACTION_ACCOUNT = tu.account_number
+ 34  AND t.rental_id = r.rental_id
+ 35  AND t.transaction_type = cl2.common_lookup_id
+ 36  AND t.TRANSACTION_DATE = tu.transaction_date
+ 37  AND t.TRANSACTION_AMOUNT = tu.TRANSACTION_AMOUNT
+ 38  AND t.PAYMENT_METHOD_type = cl2.common_lookup_id
+ 39  AND t.PAYMENT_ACCOUNT_NUMBER = m.credit_card_number
+ 40  GROUP BY t.transaction_id
+ 41  ,	      tu.payment_account_number
+ 42  ,	      cl1.common_lookup_id
+ 43  ,	      tu.transaction_date
+ 44  ,	      r.rental_id
+ 45  ,	      cl2.common_lookup_id
+ 46  ,	      m.credit_card_number
+ 47  ,	      1001
+ 48  ,	      TRUNC(SYSDATE)
+ 49  ,	      1001
+ 50  ,	      TRUNC(SYSDATE)) source
+ 51  ON (target.transaction_id = source.transaction_id)
+ 52  WHEN MATCHED THEN
+ 53  UPDATE SET last_updated_by = source.last_updated_by
+ 54  ,		last_update_date = source.last_update_date
+ 55  WHEN NOT MATCHED THEN
+ 56  INSERT VALUES
+ 57  ( transaction_s1.nextval
+ 58  ,	    source.transaction_account
+ 59  ,	    source.transaction_type
+ 60  ,	    source.transaction_date
+ 61  ,	    source.transaction_amount
+ 62  ,	    source.rental_id
+ 63  ,	    source.payment_method_type
+ 64  ,	    source.payment_account_number
+ 65  ,	    source.created_by
+ 66  ,	    source.creation_date
+ 67  ,	    source.last_updated_by
+ 68  ,	    source.last_update_date);
+
+4681 rows merged.
+
+SQL> 
+SQL> -- Count transactions after insert
+SQL> SELECT   COUNT(*)
+  2  FROM     transaction;
+
+  COUNT(*)                                                                                         
+----------                                                                                         
+      4681                                                                                         
+
+1 row selected.
+
+SQL> 
+SQL> -- --------------------------------------------------------
+SQL> --  Step #4(a) : Put merge statements in a procedure.
+SQL> -- --------------------------------------------------------
+SQL> 
+SQL> -- Create a procedure to wrap the transformation of import to normalized tables.
+SQL> CREATE OR REPLACE PROCEDURE upload_transactions IS
+  2  BEGIN
+  3    -- Set save point for an all or nothing transaction.
+  4    SAVEPOINT starting_point;
+  5  
+  6    -- Insert or update the table, which makes this rerunnable when the file hasn't been updated.
+  7    MERGE INTO rental target
+  8  USING (
+  9  SELECT   DISTINCT
+ 10  	      r.rental_id
+ 11  ,	      c.contact_id
+ 12  ,	      tu.check_out_date AS check_out_date
+ 13  ,	      tu.return_date AS return_date
+ 14  ,	      1 AS created_by
+ 15  ,	      TRUNC(SYSDATE) AS creation_date
+ 16  ,	      1 AS last_updated_by
+ 17  ,	      TRUNC(SYSDATE) AS last_update_date
+ 18  FROM     member m INNER JOIN transaction_upload tu
+ 19  ON       m.account_number = tu.account_number INNER JOIN contact c
+ 20  ON       m.member_id = c.member_id
+ 21  LEFT JOIN rental r
+ 22  ON       c.contact_id = r.customer_id
+ 23  AND      TRUNC(tu.check_out_date) = TRUNC(r.check_out_date)
+ 24  AND      TRUNC(tu.return_date) = TRUNC(r.return_date)
+ 25  WHERE    c.first_name = tu.first_name
+ 26  AND      NVL(c.middle_name,'x') = NVL(tu.middle_name,'x')
+ 27  AND      c.last_name = tu.last_name) source
+ 28  ON (target.rental_id = source.rental_id)
+ 29  WHEN MATCHED THEN
+ 30  UPDATE SET last_updated_by = source.last_updated_by
+ 31  ,		last_update_date = source.last_update_date
+ 32  WHEN NOT MATCHED THEN
+ 33  INSERT VALUES
+ 34  ( rental_s1.NEXTVAL
+ 35  , source.contact_id
+ 36  , source.check_out_date
+ 37  , source.return_date
+ 38  , source.created_by
+ 39  , source.creation_date
+ 40  , source.last_updated_by
+ 41  , source.last_update_date);
+ 42  
+ 43    -- Insert or update the table, which makes this rerunnable when the file hasn't been updated.
+ 44    MERGE INTO rental_item target
+ 45  USING (
+ 46  SELECT   ri.rental_item_id
+ 47  ,	      r.rental_id
+ 48  ,	      tu.item_id
+ 49  ,	      TRUNC(r.return_date) - TRUNC(r.check_out_date) AS rental_item_price
+ 50  ,	      cl1.common_lookup_id AS rental_item_type
+ 51  ,	      1001 AS created_by
+ 52  ,	      TRUNC(SYSDATE) AS creation_date
+ 53  ,	      1001 AS last_updated_by
+ 54  ,	      TRUNC(SYSDATE) AS last_update_date
+ 55  FROM     member m INNER JOIN transaction_upload tu
+ 56  ON       m.account_number = tu.account_number INNER JOIN contact c
+ 57  ON       m.member_id = c.member_id
+ 58  LEFT JOIN rental r
+ 59  ON       c.contact_id = r.customer_id
+ 60  AND      TRUNC(tu.check_out_date) = TRUNC(r.check_out_date)
+ 61  AND      TRUNC(tu.return_date) = TRUNC(r.return_date)
+ 62  INNER JOIN common_lookup cl1
+ 63  ON       cl1.common_lookup_table = 'RENTAL_ITEM'
+ 64  AND      cl1.common_lookup_column = 'RENTAL_ITEM_TYPE'
+ 65  AND      cl1.common_lookup_type = tu.rental_item_type
+ 66  LEFT JOIN rental_item ri
+ 67  ON       r.rental_id = ri.rental_id
+ 68  WHERE    c.first_name = tu.first_name
+ 69  AND      NVL(c.middle_name,'x') = NVL(tu.middle_name,'x')
+ 70  AND      c.last_name = tu.last_name) source
+ 71  ON (target.rental_item_id = source.rental_item_id)
+ 72  WHEN MATCHED THEN
+ 73  UPDATE SET last_updated_by = source.last_updated_by
+ 74  ,		last_update_date = source.last_update_date
+ 75  WHEN NOT MATCHED THEN
+ 76  INSERT VALUES
+ 77  ( rental_item_s1.nextval
+ 78  , source.rental_id
+ 79  , source.item_id
+ 80  , source.created_by
+ 81  , source.creation_date
+ 82  , source.last_updated_by
+ 83  , source.last_update_date
+ 84  , source.rental_item_type
+ 85  , source.rental_item_price);
+ 86  
+ 87    -- Insert or update the table, which makes this rerunnable when the file hasn't been updated.
+ 88    MERGE INTO transaction target
+ 89  USING (
+ 90  SELECT   t.transaction_id
+ 91  ,	      tu.payment_account_number AS transaction_account
+ 92  ,	      cl1.common_lookup_id AS transaction_type
+ 93  ,	      TRUNC(tu.transaction_date) AS transaction_date
+ 94  ,	     (SUM(tu.transaction_amount) / 1.06) AS transaction_amount
+ 95  ,	      r.rental_id
+ 96  ,	      cl2.common_lookup_id AS payment_method_type
+ 97  ,	      m.credit_card_number AS payment_account_number
+ 98  ,	      1001 AS created_by
+ 99  ,	      TRUNC(SYSDATE) AS creation_date
+100  ,	      1001 AS last_updated_by
+101  ,	      TRUNC(SYSDATE) AS last_update_date
+102  FROM     member m INNER JOIN contact c
+103  ON       m.member_id = c.member_id INNER JOIN transaction_upload tu
+104  ON       c.first_name = tu.first_name
+105  AND      NVL(c.middle_name,'x') = NVL(tu.middle_name,'x')
+106  AND      c.last_name = tu.last_name
+107  LEFT JOIN rental r
+108  ON       c.contact_id = r.customer_id
+109  AND      TRUNC(r.check_out_date) = TRUNC(tu.check_out_date)
+110  AND      TRUNC(r.return_date) = TRUNC(tu.return_date)
+111  INNER JOIN common_lookup cl1
+112  ON      cl1.common_lookup_table = 'TRANSACTION'
+113  AND     cl1.common_lookup_column = 'TRANSACTION_TYPE'
+114  AND     cl1.common_lookup_type = tu.transaction_type
+115  INNER JOIN common_lookup cl2
+116  ON      cl2.common_lookup_table = 'TRANSACTION'
+117  AND     cl2.common_lookup_column = 'PAYMENT_METHOD_TYPE'
+118  AND     cl2.common_lookup_type = tu.payment_method_type
+119  LEFT JOIN transaction t
+120  ON  t.TRANSACTION_ACCOUNT = tu.account_number
+121  AND t.rental_id = r.rental_id
+122  AND t.transaction_type = cl2.common_lookup_id
+123  AND t.TRANSACTION_DATE = tu.transaction_date
+124  AND t.TRANSACTION_AMOUNT = tu.TRANSACTION_AMOUNT
+125  AND t.PAYMENT_METHOD_type = cl2.common_lookup_id
+126  AND t.PAYMENT_ACCOUNT_NUMBER = m.credit_card_number
+127  GROUP BY t.transaction_id
+128  ,	      tu.payment_account_number
+129  ,	      cl1.common_lookup_id
+130  ,	      tu.transaction_date
+131  ,	      r.rental_id
+132  ,	      cl2.common_lookup_id
+133  ,	      m.credit_card_number
+134  ,	      1001
+135  ,	      TRUNC(SYSDATE)
+136  ,	      1001
+137  ,	      TRUNC(SYSDATE)) source
+138  ON (target.transaction_id = source.transaction_id)
+139  WHEN MATCHED THEN
+140  UPDATE SET last_updated_by = source.last_updated_by
+141  ,		last_update_date = source.last_update_date
+142  WHEN NOT MATCHED THEN
+143  INSERT VALUES
+144  ( transaction_s1.nextval
+145  ,	    source.transaction_account
+146  ,	    source.transaction_type
+147  ,	    source.transaction_date
+148  ,	    source.transaction_amount
+149  ,	    source.rental_id
+150  ,	    source.payment_method_type
+151  ,	    source.payment_account_number
+152  ,	    source.created_by
+153  ,	    source.creation_date
+154  ,	    source.last_updated_by
+155  ,	    source.last_update_date);
+156  
+157    -- Save the changes.
+158    COMMIT;
+159  
+160  EXCEPTION
+161    WHEN OTHERS THEN
+162  	 ROLLBACK TO starting_point;
+163  	 RETURN;
+164  END;
+165  /
+
+Procedure created.
+
+SQL> 
+SQL> -- Show errors if any.
+SQL> SHOW ERRORS
+No errors.
+SQL> 
+SQL> -- --------------------------------------------------------
+SQL> --  Step #4(b) : Execute the procedure for the first time.
+SQL> -- --------------------------------------------------------
+SQL> 
+SQL> -- Verify and execute procedure.
+SQL> COLUMN rental_count      FORMAT 99,999 HEADING "Rental|Count"
+SQL> COLUMN rental_item_count FORMAT 99,999 HEADING "Rental|Item|Count"
+SQL> COLUMN transaction_count FORMAT 99,999 HEADING "Transaction|Count"
+SQL> 
+SQL> -- Query for initial counts, should return:
+SQL> -- ----------------------------------------------
+SQL> -- 	 Rental
+SQL> --  Rental    Item Transaction
+SQL> --   Count   Count       Count
+SQL> -- ------- ------- -----------
+SQL> --       8      12 	  0
+SQL> -- ----------------------------------------------
+SQL> SELECT   rental_count
+  2  ,	      rental_item_count
+  3  ,	      transaction_count
+  4  FROM    (SELECT COUNT(*) AS rental_count FROM rental) CROSS JOIN
+  5  	     (SELECT COUNT(*) AS rental_item_count FROM rental_item) CROSS JOIN
+  6  	     (SELECT COUNT(*) AS transaction_count FROM transaction);
+
+         Rental                                                                                    
+ Rental    Item Transaction                                                                        
+  Count   Count       Count                                                                        
+------- ------- -----------                                                                        
+  4,689  11,533       4,681                                                                        
+
+1 row selected.
+
+SQL> 
+SQL> -- Transform import source into normalized tables.
+SQL> EXECUTE upload_transactions;
+
+PL/SQL procedure successfully completed.
+
+SQL> 
+SQL> -- --------------------------------------------------------
+SQL> --  Step #4(c) : Verify first merge statements results.
+SQL> -- --------------------------------------------------------
+SQL> 
+SQL> -- Requery to see completed counts, should return:
+SQL> -- ----------------------------------------------
+SQL> -- 	 Rental
+SQL> --  Rental    Item Transaction
+SQL> --   Count   Count       Count
+SQL> -- ------- ------- -----------
+SQL> --   4,689  11,532       4,681
+SQL> -- ----------------------------------------------
+SQL> SELECT   rental_count
+  2  ,	      rental_item_count
+  3  ,	      transaction_count
+  4  FROM    (SELECT COUNT(*) AS rental_count FROM rental) CROSS JOIN
+  5  	     (SELECT COUNT(*) AS rental_item_count FROM rental_item) CROSS JOIN
+  6  	     (SELECT COUNT(*) AS transaction_count FROM transaction);
+
+         Rental                                                                                    
+ Rental    Item Transaction                                                                        
+  Count   Count       Count                                                                        
+------- ------- -----------                                                                        
+  4,689  11,533       4,681                                                                        
+
+1 row selected.
+
+SQL> 
+SQL> -- --------------------------------------------------------
+SQL> --  Step #4(d) : Execute the procedure for the second time.
+SQL> -- --------------------------------------------------------
+SQL> 
+SQL> -- Transform import source into normalized tables.
+SQL> EXECUTE upload_transactions;
+
+PL/SQL procedure successfully completed.
+
+SQL> 
+SQL> -- --------------------------------------------------------
+SQL> --  Step #4(e) : Verify second merge statements results.
+SQL> -- --------------------------------------------------------
+SQL> 
+SQL> -- Requery to see completed counts, should return:
+SQL> -- ----------------------------------------------
+SQL> -- 	 Rental
+SQL> --  Rental    Item Transaction
+SQL> --   Count   Count       Count
+SQL> -- ------- ------- -----------
+SQL> --   4,689  11,532       4,681
+SQL> -- ----------------------------------------------
+SQL> 
+SQL> SELECT   rental_count
+  2  ,	      rental_item_count
+  3  ,	      transaction_count
+  4  FROM    (SELECT COUNT(*) AS rental_count FROM rental) CROSS JOIN
+  5  	     (SELECT COUNT(*) AS rental_item_count FROM rental_item) CROSS JOIN
+  6  	     (SELECT COUNT(*) AS transaction_count FROM transaction);
+
+         Rental                                                                                    
+ Rental    Item Transaction                                                                        
+  Count   Count       Count                                                                        
+------- ------- -----------                                                                        
+  4,689  11,533       4,681                                                                        
+
+1 row selected.
+
+SQL> 
+SQL> -- --------------------------------------------------------
+SQL> --  Step #5 : Demonstrate aggregation with sorting options.
+SQL> -- --------------------------------------------------------
+SQL> -- Expand line length in environment.
+SQL> SET LINESIZE 150
+SQL> COLUMN month FORMAT A10 HEADING "MONTH"
+SQL> 
+SQL> -- Query, aggregate, and sort data.
+SQL> -- Query for initial counts, should return:
+SQL> -- --------------------------------------------------------------------------------------------
+SQL> -- MONTH	   BASE_REVENUE   10_PLUS	 20_PLUS	10_PLUS_LESS_B 20_PLUS_LESS_B
+SQL> -- ---------- -------------- -------------- -------------- -------------- --------------
+SQL> -- JAN-2009	$2,671.20      $2,938.32      $3,205.44        $267.12	      $534.24
+SQL> -- FEB-2009	$4,270.74      $4,697.81      $5,124.89        $427.07	      $854.15
+SQL> -- MAR-2009	$5,371.02      $5,908.12      $6,445.22        $537.10	    $1,074.20
+SQL> -- APR-2009	$4,932.18      $5,425.40      $5,918.62        $493.22	      $986.44
+SQL> -- MAY-2009	$2,216.46      $2,438.11      $2,659.75        $221.65	      $443.29
+SQL> -- JUN-2009	$1,208.40      $1,329.24      $1,450.08        $120.84	      $241.68
+SQL> -- JUL-2009	$2,404.08      $2,644.49      $2,884.90        $240.41	      $480.82
+SQL> -- AUG-2009	$2,241.90      $2,466.09      $2,690.28        $224.19	      $448.38
+SQL> -- SEP-2009	$2,197.38      $2,417.12      $2,636.86        $219.74	      $439.48
+SQL> -- OCT-2009	$3,275.40      $3,602.94      $3,930.48        $327.54	      $655.08
+SQL> -- NOV-2009	$3,125.94      $3,438.53      $3,751.13        $312.59	      $625.19
+SQL> -- DEC-2009	$2,340.48      $2,574.53      $2,808.58        $234.05	      $468.10
+SQL> -- --------------------------------------------------------------------------------------------
+SQL> 
+SQL> SELECT il.MONTH
+  2  ,	     il.BASE_REVENUE
+  3  ,	     il.ten_plus AS "10_PLUS"
+  4  ,	     il.twenty_plus AS "20_PLUS"
+  5  ,	     il.ten_plus_less_b AS "10_PLUS_LESS_B"
+  6  ,	     il.twenty_plus_less_b AS "20_PLUS_LESS_B"
+  7  FROM (SELECT CONCAT(TO_CHAR(t.transaction_Date,'MON'),CONCAT('-',EXTRACT(YEAR FROM t.transaction_date))) AS MONTH
+  8  ,	     EXTRACT(MONTH FROM TRUNC(t.transaction_date)) AS sortkey
+  9  ,	     TO_CHAR(SUM(t.transaction_amount),'$9,999,999.00') AS BASE_REVENUE
+ 10  ,	     TO_CHAR(SUM(t.transaction_amount + (t.transaction_amount * .1)),'$9,999,999.00') AS ten_plus
+ 11  ,	     TO_CHAR(SUM(t.transaction_amount + (t.transaction_amount * .2)),'$9,999,999.00') AS twenty_plus
+ 12  ,	     TO_CHAR(SUM(t.transaction_amount + (t.transaction_amount * .1)) -
+ 13  		     SUM(t.transaction_amount),'$9,999,999.00') AS ten_plus_less_b
+ 14  ,	     TO_CHAR(SUM(t.transaction_amount + (t.transaction_amount * .2)) -
+ 15  		     SUM(t.transaction_amount),'$9,999,999.00') AS twenty_plus_less_b
+ 16  FROM transaction t
+ 17  WHERE EXTRACT(YEAR FROM TRUNC(t.transaction_date)) = 2009
+ 18  GROUP BY CONCAT(TO_CHAR(t.transaction_Date,'MON'),CONCAT('-',EXTRACT(YEAR FROM t.transaction_date)))
+ 19  , EXTRACT(MONTH FROM TRUNC(t.transaction_date))) il
+ 20  ORDER BY il.sortkey;
+
+MONTH      BASE_REVENUE   10_PLUS        20_PLUS        10_PLUS_LESS_B 20_PLUS_LESS_B                                                                 
+---------- -------------- -------------- -------------- -------------- --------------                                                                 
+JAN-2009        $2,520.00      $2,772.00      $3,024.00        $252.00        $504.00                                                                 
+FEB-2009        $4,029.00      $4,431.90      $4,834.80        $402.90        $805.80                                                                 
+MAR-2009        $5,067.00      $5,573.70      $6,080.40        $506.70      $1,013.40                                                                 
+APR-2009        $4,653.00      $5,118.30      $5,583.60        $465.30        $930.60                                                                 
+MAY-2009        $2,091.00      $2,300.10      $2,509.20        $209.10        $418.20                                                                 
+JUN-2009        $1,140.00      $1,254.00      $1,368.00        $114.00        $228.00                                                                 
+JUL-2009        $2,268.00      $2,494.80      $2,721.60        $226.80        $453.60                                                                 
+AUG-2009        $2,115.00      $2,326.50      $2,538.00        $211.50        $423.00                                                                 
+SEP-2009        $2,073.00      $2,280.30      $2,487.60        $207.30        $414.60                                                                 
+OCT-2009        $3,090.00      $3,399.00      $3,708.00        $309.00        $618.00                                                                 
+NOV-2009        $2,949.00      $3,243.90      $3,538.80        $294.90        $589.80                                                                 
+DEC-2009        $2,208.00      $2,428.80      $2,649.60        $220.80        $441.60                                                                 
+
+12 rows selected.
+
+SQL> 
+SQL> 
+SQL> 
+SQL> 
+SQL> 
+SQL> 
+SQL> 
+SQL> 
+SQL> 
+SQL> 
+SQL> 
+SQL> 
+SQL> SPOOL OFF
